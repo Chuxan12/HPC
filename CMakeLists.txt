@@ -1,38 +1,38 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Lab0MatMul LANGUAGES CXX)
+project(Lab1VectorSum LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(matmul_bench
+add_executable(vector_sum_bench
     src/main.cpp
-    src/cpu_matmul.cpp
+    src/cpu_vector_sum.cpp
 )
 
-target_include_directories(matmul_bench PRIVATE src)
-target_compile_options(matmul_bench PRIVATE -O3 -Wall -Wextra -Wpedantic)
+target_include_directories(vector_sum_bench PRIVATE src)
+target_compile_options(vector_sum_bench PRIVATE -O3 -Wall -Wextra -Wpedantic)
 
 include(CheckLanguage)
 check_language(CUDA)
 
 if(CMAKE_CUDA_COMPILER)
     enable_language(CUDA)
-    target_sources(matmul_bench PRIVATE src/cuda_matmul.cu)
-    target_compile_definitions(matmul_bench PRIVATE HPC_HAS_CUDA=1)
+    target_sources(vector_sum_bench PRIVATE src/cuda_vector_sum.cu)
+    target_compile_definitions(vector_sum_bench PRIVATE HPC_HAS_CUDA=1)
 
-    set_target_properties(matmul_bench PROPERTIES
+    set_target_properties(vector_sum_bench PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
         CUDA_SEPARABLE_COMPILATION ON
     )
 
-    target_compile_options(matmul_bench PRIVATE
+    target_compile_options(vector_sum_bench PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-O3>
     )
 else()
     message(WARNING "CUDA compiler was not found. Building CPU-only variant.")
-    target_sources(matmul_bench PRIVATE src/cuda_stub.cpp)
-    target_compile_definitions(matmul_bench PRIVATE HPC_HAS_CUDA=0)
+    target_sources(vector_sum_bench PRIVATE src/cuda_stub.cpp)
+    target_compile_definitions(vector_sum_bench PRIVATE HPC_HAS_CUDA=0)
 endif()

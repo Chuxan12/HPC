@@ -1,4 +1,4 @@
-#include "matmul.hpp"
+#include "vector_sum.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -8,7 +8,6 @@
 #include <iostream>
 #include <limits>
 #include <random>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -39,66 +38,50 @@ namespace
 
         if (sizes.empty())
         {
-            sizes = {100, 300, 500, 700, 1000, 1500, 2000};
+            sizes = {1000, 10000, 50000, 100000, 500000, 1000000};
         }
 
         return sizes;
     }
 
-    Matrix make_random_matrix(int rows, int cols, uint32_t seed)
+    std::vector<float> make_random_vector(int size, uint32_t seed)
     {
-        Matrix m(rows, cols);
+        std::vector<float> values(static_cast<size_t>(size), 0.0f);
         std::mt19937 gen(seed);
         std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
 
-        for (auto &v : m.data)
+        for (float &v : values)
         {
             v = dist(gen);
         }
 
-        return m;
+        return values;
     }
 
-    float run_cpu(const Matrix &a, const Matrix &b, Matrix &c)
+    float run_cpu_sum(const std::vector<float> &values, float &sum)
     {
         const auto start = std::chrono::high_resolution_clock::now();
-        matmul_cpu(a, b, c);
+        sum = vector_sum_cpu(values);
         const auto finish = std::chrono::high_resolution_clock::now();
         return std::chrono::duration<float, std::milli>(finish - start).count();
     }
 
-    float max_abs_diff(const Matrix &x, const Matrix &y)
-    {
-        if (x.rows != y.rows || x.cols != y.cols)
-        {
-            return std::numeric_limits<float>::infinity();
-        }
-
-        float diff = 0.0f;
-        for (size_t i = 0; i < x.data.size(); ++i)
-        {
-            diff = std::max(diff, std::fabs(x.data[i] - y.data[i]));
-        }
-
-        return diff;
-    }
-
-}
+} // namespace
 
 int main(int argc, char **argv)
 {
     const std::vector<int> sizes = parse_sizes(argc, argv);
-    const std::vector<int> block_sizes = {8, 16, 32};
+    const std::vector<int> block_sizes = {128, 256, 512};
 
+    // CUDA warm-up to reduce one-time context initialization impact.
     {
-        Matrix wa = make_random_matrix(64, 64, 1234);
-        Matrix wb = make_random_matrix(64, 64, 4321);
-        Matrix wc(64, 64);
+        const std::vector<float> warmup_values = make_random_vector(4096, 1234);
+        float warmup_sum = 0.0f;
         float warmup_ms = 0.0f;
         std::string warmup_error;
         for (const int block_size : block_sizes)
         {
-            matmul_gpu(wa, wb, wc, block_size, warmup_ms, warmup_error);
+            vector_sum_gpu(warmup_values, block_size, warmup_sum, warmup_ms, warmup_error);
         }
     }
 
@@ -110,27 +93,27 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    csv_detail << "size,block_size,cpu_ms,gpu_ms,speedup,max_abs_diff,correct,gpu_status\n";
-    csv_summary << "size,best_block_size,cpu_ms,best_gpu_ms,best_speedup,max_abs_diff,correct,gpu_status\n";
+    csv_detail << "size,block_size,cpu_ms,gpu_ms,speedup,cpu_sum,gpu_sum,abs_diff,correct,gpu_status\n";
+    csv_summary << "size,best_block_size,cpu_ms,best_gpu_ms,best_speedup,cpu_sum,best_gpu_sum,abs_diff,correct,gpu_status\n";
 
-    std::cout << std::left << std::setw(8) << "N"
+    std::cout << std::left << std::setw(10) << "N"
               << std::setw(10) << "Block"
               << std::setw(14) << "CPU(ms)"
               << std::setw(14) << "GPU(ms)"
               << std::setw(12) << "Speedup"
-              << std::setw(14) << "MaxDiff"
+              << std::setw(14) << "AbsDiff"
               << "Status\n";
 
     for (const int n : sizes)
     {
-        Matrix a = make_random_matrix(n, n, static_cast<uint32_t>(n * 17 + 1));
-        Matrix b = make_random_matrix(n, n, static_cast<uint32_t>(n * 17 + 2));
+        const std::vector<float> values = make_random_vector(n, static_cast<uint32_t>(n * 17 + 1));
 
-        Matrix c_cpu(n, n);
-        const float cpu_ms = run_cpu(a, b, c_cpu);
+        float cpu_sum = 0.0f;
+        const float cpu_ms = run_cpu_sum(values, cpu_sum);
 
         float best_gpu_ms = std::numeric_limits<float>::infinity();
         float best_speedup = 0.0f;
+        float best_gpu_sum = std::numeric_limits<float>::quiet_NaN();
         float best_diff = std::numeric_limits<float>::quiet_NaN();
         int best_block = -1;
         bool best_correct = false;
@@ -138,10 +121,10 @@ int main(int argc, char **argv)
 
         for (const int block_size : block_sizes)
         {
-            Matrix c_gpu(n, n);
+            float gpu_sum = 0.0f;
             float gpu_ms = 0.0f;
             std::string gpu_error;
-            const bool gpu_ok = matmul_gpu(a, b, c_gpu, block_size, gpu_ms, gpu_error);
+            const bool gpu_ok = vector_sum_gpu(values, block_size, gpu_sum, gpu_ms, gpu_error);
 
             float diff = std::numeric_limits<float>::quiet_NaN();
             bool correct = false;
@@ -149,8 +132,9 @@ int main(int argc, char **argv)
 
             if (gpu_ok)
             {
-                diff = max_abs_diff(c_cpu, c_gpu);
-                correct = diff < 1e-2f;
+                diff = std::fabs(cpu_sum - gpu_sum);
+                const float tolerance = 1e-2f * static_cast<float>(n);
+                correct = diff <= tolerance;
                 if (gpu_ms > 0.0f)
                 {
                     speedup = cpu_ms / gpu_ms;
@@ -160,6 +144,7 @@ int main(int argc, char **argv)
                 {
                     best_gpu_ms = gpu_ms;
                     best_speedup = speedup;
+                    best_gpu_sum = gpu_sum;
                     best_diff = diff;
                     best_block = block_size;
                     best_correct = true;
@@ -170,6 +155,7 @@ int main(int argc, char **argv)
                 {
                     best_gpu_ms = gpu_ms;
                     best_speedup = speedup;
+                    best_gpu_sum = gpu_sum;
                     best_diff = diff;
                     best_block = block_size;
                     best_status = "MISMATCH";
@@ -181,7 +167,7 @@ int main(int argc, char **argv)
             }
 
             const std::string status = gpu_ok ? (correct ? "OK" : "MISMATCH") : "GPU_UNAVAILABLE";
-            std::cout << std::left << std::setw(8) << n
+            std::cout << std::left << std::setw(10) << n
                       << std::setw(10) << block_size
                       << std::setw(14) << std::fixed << std::setprecision(3) << cpu_ms
                       << std::setw(14) << (gpu_ok ? gpu_ms : -1.0f)
@@ -198,6 +184,8 @@ int main(int argc, char **argv)
             csv_detail << n << ',' << block_size << ',' << cpu_ms << ','
                        << (gpu_ok ? gpu_ms : -1.0f) << ','
                        << (gpu_ok ? speedup : 0.0f) << ','
+                       << cpu_sum << ','
+                       << (gpu_ok ? gpu_sum : -1.0f) << ','
                        << (gpu_ok ? diff : -1.0f) << ','
                        << (correct ? 1 : 0) << ','
                        << '"' << (gpu_ok ? status : gpu_error) << '"' << '\n';
@@ -206,6 +194,8 @@ int main(int argc, char **argv)
         csv_summary << n << ',' << best_block << ',' << cpu_ms << ','
                     << (best_block >= 0 ? best_gpu_ms : -1.0f) << ','
                     << (best_block >= 0 ? best_speedup : 0.0f) << ','
+                    << cpu_sum << ','
+                    << (best_block >= 0 ? best_gpu_sum : -1.0f) << ','
                     << (best_block >= 0 ? best_diff : -1.0f) << ','
                     << (best_correct ? 1 : 0) << ',' << '"' << best_status << '"' << '\n';
     }

@@ -1,38 +1,32 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Lab1VectorSum LANGUAGES CXX)
+project(Lab2GeneticAlgorithm LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(vector_sum_bench
+if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(WARNING "Recommended compiler for this lab: clang/clang++. Current: ${CMAKE_CXX_COMPILER_ID}")
+endif()
+
+add_executable(genetic_algorithm_bench
     src/main.cpp
-    src/cpu_vector_sum.cpp
+    src/genetic_algorithm.cpp
+    src/genetic_algorithm_cuda.cu
 )
 
-target_include_directories(vector_sum_bench PRIVATE src)
-target_compile_options(vector_sum_bench PRIVATE -O3 -Wall -Wextra -Wpedantic)
+target_include_directories(genetic_algorithm_bench PRIVATE src)
+target_compile_options(genetic_algorithm_bench PRIVATE -O3 -Wall -Wextra -Wpedantic)
 
-include(CheckLanguage)
-check_language(CUDA)
+set_target_properties(genetic_algorithm_bench PROPERTIES
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_SEPARABLE_COMPILATION ON
+)
 
-if(CMAKE_CUDA_COMPILER)
-    enable_language(CUDA)
-    target_sources(vector_sum_bench PRIVATE src/cuda_vector_sum.cu)
-    target_compile_definitions(vector_sum_bench PRIVATE HPC_HAS_CUDA=1)
+target_compile_options(genetic_algorithm_bench PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-O3>
+)
 
-    set_target_properties(vector_sum_bench PROPERTIES
-        CUDA_STANDARD 17
-        CUDA_STANDARD_REQUIRED ON
-        CUDA_SEPARABLE_COMPILATION ON
-    )
-
-    target_compile_options(vector_sum_bench PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:-O3>
-    )
-else()
-    message(WARNING "CUDA compiler was not found. Building CPU-only variant.")
-    target_sources(vector_sum_bench PRIVATE src/cuda_stub.cpp)
-    target_compile_definitions(vector_sum_bench PRIVATE HPC_HAS_CUDA=0)
-endif()
+target_link_libraries(genetic_algorithm_bench PRIVATE curand)
